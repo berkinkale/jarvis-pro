@@ -1,5 +1,5 @@
 """
-JARVIS PRO - Sesli + Yazılı, Gerçek Yapay Zeka Destekli Asistan
+NOVA PRO - Sesli + Yazılı, Gerçek Yapay Zeka Destekli Asistan
 =================================================================
 
 Bu sürüm öncekinden farklı olarak:
@@ -62,7 +62,7 @@ konusma_kilidi = threading.Lock()
 
 def konus(metin):
     """Metni hem ekrana yazar hem sesli okur (thread-safe)."""
-    print(f"\nJARVIS: {metin}\n")
+    print(f"\nNOVA: {metin}\n")
     with konusma_kilidi:
         engine.say(metin)
         engine.runAndWait()
@@ -148,9 +148,11 @@ def wikipedia_ara(sorgu):
 sohbet_gecmisi = []
 
 SISTEM_TALIMATI = (
-    "Sen JARVIS adında, kullanıcıya 'efendim' diye hitap eden, kibar, kısa ve net "
-    "konuşan bir sesli asistansın. Cevapların sesli okunacağı için 2-3 cümleyi "
-    "geçmemeye, madde işareti veya markdown kullanmamaya özen göster."
+    "Sen NOVA adında, Berkin tarafından geliştirilmiş, kullanıcıya 'efendim' diye "
+    "hitap eden, kibar, kısa ve net konuşan bir sesli asistansın. Sana yapımcın "
+    "sorulursa Berkin tarafından geliştirildiğini söylersin. Cevapların sesli "
+    "okunacağı için 2-3 cümleyi geçmemeye, madde işareti veya markdown "
+    "kullanmamaya özen göster."
 )
 
 
@@ -205,7 +207,10 @@ def komutu_isle(komut):
         wikipedia_ara(sorgu)
 
     elif "adın ne" in komut or "sen kimsin" in komut:
-        konus("Ben JARVIS, sizin kişisel asistanınızım.")
+        konus("Ben NOVA, Berkin tarafından geliştirilen kişisel asistanınızım.")
+
+    elif "yapımcı" in komut or "seni kim yaptı" in komut or "geliştiric" in komut:
+        konus("Beni Berkin geliştirdi.")
 
     elif any(k in komut for k in ["kapan", "güle güle", "çıkış yap", "dur artık"]):
         konus("Görüşmek üzere efendim.")
@@ -224,7 +229,7 @@ def komutu_isle(komut):
 # ----------------------------------------------------------------------
 def ana_dongu():
     gunaydin_kontrolu()
-    konus("Ben JARVIS. Hem konuşarak hem yazarak benimle iletişim kurabilirsiniz.")
+    konus("Ben NOVA. Hem konuşarak hem yazarak benimle iletişim kurabilirsiniz.")
     print(">> Konuşabilir ya da buraya yazıp Enter'a basabilirsiniz.\n")
 
     ses_thread = threading.Thread(target=sesli_dinleyici, daemon=True)
@@ -244,6 +249,6 @@ if __name__ == "__main__":
     try:
         ana_dongu()
     except KeyboardInterrupt:
-        print("\nJARVIS kapatılıyor...")
+        print("\nNOVA kapatılıyor...")
         CALISIYOR = False
         sys.exit(0)
