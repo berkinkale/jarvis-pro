@@ -1,0 +1,249 @@
+"""
+JARVIS PRO - Sesli + Yazılı, Gerçek Yapay Zeka Destekli Asistan
+=================================================================
+
+Bu sürüm öncekinden farklı olarak:
+  1) Hem KONUŞARAK hem YAZARAK komut verebilirsiniz (aynı anda dinler).
+  2) Basit kalıp komutların (saat, hava durumu vb.) dışında kalan her şeyi
+     gerçek bir yapay zekaya (Claude API) sorup GERÇEK, akıllı cevaplar alır.
+     Böylece "ezbere" cevaplar yerine gerçek bir asistanla konuşmuş gibi olursunuz.
+  3) Konuşma geçmişini hatırlar (aynı oturum içinde bağlam kaybolmaz).
+
+KURULUM
+-------
+    pip install SpeechRecognition pyttsx3 pyaudio wikipedia requests anthropic
+
+API ANAHTARI
+------------
+Gerçek yapay zeka cevapları için bir Anthropic API anahtarına ihtiyacınız var:
+    https://console.anthropic.com adresinden alıp ortam değişkeni olarak tanımlayın:
+
+    Windows (PowerShell):  setx ANTHROPIC_API_KEY "buraya-anahtar"
+    macOS/Linux:            export ANTHROPIC_API_KEY="buraya-anahtar"
+
+API anahtarı yoksa program yine çalışır; sadece kalıp komutlarla sınırlı kalır,
+serbest sohbet için basit bir uyarı verir.
+"""
+
+import os
+import sys
+import threading
+import queue
+import datetime
+import webbrowser
+
+import speech_recognition as sr
+import pyttsx3
+import requests
+import wikipedia
+
+try:
+    import anthropic
+    API_ANAHTARI = os.environ.get("ANTHROPIC_API_KEY")
+    AI_AKTIF = bool(API_ANAHTARI)
+    if AI_AKTIF:
+        istemci = anthropic.Anthropic(api_key=API_ANAHTARI)
+except ImportError:
+    AI_AKTIF = False
+
+
+# ----------------------------------------------------------------------
+# SES MOTORU
+# ----------------------------------------------------------------------
+engine = pyttsx3.init()
+for voice in engine.getProperty('voices'):
+    if 'turkish' in voice.name.lower() or 'tr' in voice.id.lower():
+        engine.setProperty('voice', voice.id)
+        break
+engine.setProperty('rate', 178)
+
+konusma_kilidi = threading.Lock()
+
+
+def konus(metin):
+    """Metni hem ekrana yazar hem sesli okur (thread-safe)."""
+    print(f"\nJARVIS: {metin}\n")
+    with konusma_kilidi:
+        engine.say(metin)
+        engine.runAndWait()
+
+
+# ----------------------------------------------------------------------
+# ORTAK KOMUT KUYRUĞU (sesli ve yazılı girişler buraya düşer)
+# ----------------------------------------------------------------------
+komut_kuyrugu = queue.Queue()
+CALISIYOR = True
+
+
+def sesli_dinleyici():
+    """Arka planda sürekli mikrofonu dinler, algıladığı metni kuyruğa atar."""
+    r = sr.Recognizer()
+    mikrofon = sr.Microphone()
+    with mikrofon as kaynak:
+        r.adjust_for_ambient_noise(kaynak, duration=1)
+
+    while CALISIYOR:
+        try:
+            with mikrofon as kaynak:
+                ses = r.listen(kaynak, timeout=4, phrase_time_limit=10)
+            metin = r.recognize_google(ses, language="tr-TR")
+            komut_kuyrugu.put(("ses", metin.lower()))
+        except sr.WaitTimeoutError:
+            continue
+        except sr.UnknownValueError:
+            continue
+        except sr.RequestError:
+            continue
+        except OSError:
+            # Mikrofon yoksa döngüyü durdur
+            break
+
+
+def yazili_dinleyici():
+    """Arka planda klavyeden gelen satırları okur, kuyruğa atar."""
+    while CALISIYOR:
+        try:
+            metin = input()
+        except EOFError:
+            break
+        if metin.strip():
+            komut_kuyrugu.put(("yazi", metin.strip().lower()))
+
+
+# ----------------------------------------------------------------------
+# YARDIMCI FONKSİYONLAR
+# ----------------------------------------------------------------------
+def gunaydin_kontrolu():
+    saat = datetime.datetime.now().hour
+    if 6 <= saat < 12:
+        konus("Günaydın efendim.")
+    elif 12 <= saat < 18:
+        konus("İyi günler efendim.")
+    elif 18 <= saat < 22:
+        konus("İyi akşamlar efendim.")
+    else:
+        konus("İyi geceler efendim.")
+
+
+def hava_durumu(sehir="Izmir"):
+    try:
+        yanit = requests.get(f"https://wttr.in/{sehir}?format=%C+%t", timeout=5)
+        konus(f"{sehir} için hava durumu: {yanit.text}" if yanit.status_code == 200
+              else "Hava durumu bilgisine ulaşamadım.")
+    except Exception:
+        konus("Hava durumu servisine bağlanırken bir hata oluştu.")
+
+
+def wikipedia_ara(sorgu):
+    try:
+        wikipedia.set_lang("tr")
+        konus(wikipedia.summary(sorgu, sentences=2))
+    except Exception:
+        konus("Bu konuda net bir sonuç bulamadım.")
+
+
+# ----------------------------------------------------------------------
+# GERÇEK YAPAY ZEKA İLE SERBEST SOHBET
+# ----------------------------------------------------------------------
+sohbet_gecmisi = []
+
+SISTEM_TALIMATI = (
+    "Sen JARVIS adında, kullanıcıya 'efendim' diye hitap eden, kibar, kısa ve net "
+    "konuşan bir sesli asistansın. Cevapların sesli okunacağı için 2-3 cümleyi "
+    "geçmemeye, madde işareti veya markdown kullanmamaya özen göster."
+)
+
+
+def ai_ile_konus(mesaj):
+    if not AI_AKTIF:
+        konus("Bu konuda serbest sohbet edebilmem için bir API anahtarı tanımlanmamış efendim.")
+        return
+
+    sohbet_gecmisi.append({"role": "user", "content": mesaj})
+    try:
+        yanit = istemci.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            system=SISTEM_TALIMATI,
+            messages=sohbet_gecmisi[-10:],  # son 10 mesajla sınırlı bağlam
+        )
+        cevap = "".join(blok.text for blok in yanit.content if blok.type == "text")
+        sohbet_gecmisi.append({"role": "assistant", "content": cevap})
+        konus(cevap)
+    except Exception as hata:
+        konus("Yapay zeka servisine ulaşırken bir sorunla karşılaştım efendim.")
+        print(f"[Hata detayı: {hata}]")
+
+
+# ----------------------------------------------------------------------
+# KOMUT YÖNLENDİRME
+# ----------------------------------------------------------------------
+def komutu_isle(komut):
+    global CALISIYOR
+
+    if "saat kaç" in komut:
+        konus(f"Saat şu anda {datetime.datetime.now().strftime('%H:%M')}.")
+
+    elif "tarih" in komut or "bugün günlerden" in komut:
+        konus(f"Bugünün tarihi: {datetime.datetime.now().strftime('%d %B %Y')}")
+
+    elif "hava durumu" in komut:
+        parcalar = komut.split("hava durumu")
+        sehir = parcalar[-1].strip() or "Izmir"
+        hava_durumu(sehir)
+
+    elif "youtube" in komut:
+        konus("YouTube açılıyor.")
+        webbrowser.open("https://youtube.com")
+
+    elif "google aç" in komut:
+        konus("Google açılıyor.")
+        webbrowser.open("https://google.com")
+
+    elif komut.startswith("wikipedia") or "vikipedi" in komut:
+        sorgu = komut.replace("wikipedia", "").replace("vikipedi", "").strip()
+        wikipedia_ara(sorgu)
+
+    elif "adın ne" in komut or "sen kimsin" in komut:
+        konus("Ben JARVIS, sizin kişisel asistanınızım.")
+
+    elif any(k in komut for k in ["kapan", "güle güle", "çıkış yap", "dur artık"]):
+        konus("Görüşmek üzere efendim.")
+        CALISIYOR = False
+        return False
+
+    else:
+        # Kalıba uymayan her şey gerçek yapay zekaya gider
+        ai_ile_konus(komut)
+
+    return True
+
+
+# ----------------------------------------------------------------------
+# ANA DÖNGÜ
+# ----------------------------------------------------------------------
+def ana_dongu():
+    gunaydin_kontrolu()
+    konus("Ben JARVIS. Hem konuşarak hem yazarak benimle iletişim kurabilirsiniz.")
+    print(">> Konuşabilir ya da buraya yazıp Enter'a basabilirsiniz.\n")
+
+    ses_thread = threading.Thread(target=sesli_dinleyici, daemon=True)
+    yazi_thread = threading.Thread(target=yazili_dinleyici, daemon=True)
+    ses_thread.start()
+    yazi_thread.start()
+
+    calisiyor = True
+    while calisiyor:
+        kaynak, komut = komut_kuyrugu.get()
+        etiket = "🎤" if kaynak == "ses" else "⌨️"
+        print(f"{etiket} Kullanıcı: {komut}")
+        calisiyor = komutu_isle(komut)
+
+
+if __name__ == "__main__":
+    try:
+        ana_dongu()
+    except KeyboardInterrupt:
+        print("\nJARVIS kapatılıyor...")
+        CALISIYOR = False
+        sys.exit(0)
